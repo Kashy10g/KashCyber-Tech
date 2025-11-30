@@ -1,6 +1,6 @@
-<h1 align="center">👋 Hello, I'm <strong>Kashope Babadara</strong></h1>
+<h1 align="center">👋 Hello, I'm <strong>Kasope Oyemomi</strong></h1>
 <h3 align="center">
-🔐 Cybersecurity Engineer | 🐍 Python Developer | ⚙️ Automation Specialist  
+🔐 Cybersecurity Expert (Blue Team Defense, Partial Pentester) | 🐍 Beginner Python Developer | ⚙️ Beginner Automation Specialist  
 </h3>
 
 <p align="center">
@@ -13,7 +13,7 @@
 
 ## 🚀 About Me
 
-I am a **Cybersecurity Engineer** and **Python Automation Developer** dedicated to building tools that strengthen network security, improve analyst workflow, and make threat detection faster and smarter.
+I am a **Cybersecurity Blue Team** , **Well Exprienced Pentester and Network Analyst** and **Beginner Python Automation Developer** dedicated to building tools that strengthen network security, improve analyst workflow, and make threat detection faster and smarter.
 
 My work focuses on:
 
@@ -57,7 +57,7 @@ A full security dashboard combining scanners, log systems, reporting, and automa
   <img src="https://img.shields.io/badge/BurpSuite-orange?style=flat-square">
 </p>
 
-### 🐍 **Programming**
+### 🐍 **Python Programming**
 <p>
   <img src="https://img.shields.io/badge/Python-3670A0?style=flat-square">
   <img src="https://img.shields.io/badge/Bash_Scripting-black?style=flat-square">
@@ -75,11 +75,6 @@ A full security dashboard combining scanners, log systems, reporting, and automa
 ---
 
 ## 🏆 Certifications (In Progress & Completed)
-
-- 🛡️ Google Cybersecurity Professional Certificate  
-- 🐍 Python Programming & Automation  
-- 📡 CompTIA Security+ (In Progress)  
-- ⚙️ DevSecOps Foundations (In Progress)
 
 ---
 
