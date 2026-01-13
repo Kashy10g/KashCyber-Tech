@@ -56,7 +56,6 @@ A full security dashboard combining scanners, log systems, reporting, and automa
   <img src="https://img.shields.io/badge/Metasploit-purple?style=flat-square">
   <img src="https://img.shields.io/badge/Wireshark-green?style=flat-square">
   <img src="https://img.shields.io/badge/BurpSuite-orange?style=flat-square">
-  ### **Cybersecurity Certification** ![5132354128108522415_121](https://github.com/user-attachments/assets/15f33691-f15f-4b87-b3af-6cb618462889)
 </p>
 
 
@@ -78,6 +77,8 @@ A full security dashboard combining scanners, log systems, reporting, and automa
 ---
 
 ## 🏆 Certifications (In Progress & Completed)
+
+![5132354128108522415_121](https://github.com/user-attachments/assets/93d1a303-7604-44a0-a2ad-8739dd744efd)
 
 ---
 
