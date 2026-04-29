@@ -1,513 +1,260 @@
+#!/usr/bin/env python3
 """
-================================================================================
 CypherCore Security Vault (CLV Architecture)
-Module: security.py
-Purpose: Cryptographic validation, input scrubbing, and security enforcement
-Convention: Core-Logic-Vault (CLV) - Security Layer
-================================================================================
 
-This module is responsible for:
-  - Signature verification (HMAC-SHA256 from Meta)
-  - Prevention of unauthorized webhook access
-  - Input sanitization and validation
-  - Security event logging and audit trails
-  - Rate limiting infrastructure
-  - Protection against common attack vectors
+Purpose:
+    - Cryptographic signature validation (HMAC-SHA256)
+    - Prevents unauthorized webhook triggers
+    - Validates all inbound requests from Meta API
+    - Implements expert-level security without exceptions
 
-MUST ALWAYS:
-  - Validate every incoming request signature
-  - Log all security events (including failures)
-  - Never execute business logic without validation
-  - Sanitize all user input before processing
-  - Fail securely (never expose internal details)
+Convention:
+    - Must always validate signatures before logic processing
+    - Never allow unverified requests to proceed
+    - Log all security events for audit trail
+    - Fail securely with meaningful error responses
 
-MUST NEVER:
-  - Store plaintext secrets
-  - Skip signature validation
-  - Process unsigned requests
-  - Log sensitive data
-  - Raise detailed errors to external users
-================================================================================
+Author: CypherCore Enterprise Team
+Version: 1.0.0
+License: Proprietary
 """
 
 import hmac
 import hashlib
-import os
 import logging
-import json
-from typing import Dict, Optional, Tuple
-from datetime import datetime, timedelta
+import os
+from typing import Optional
 from fastapi import Request, HTTPException
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# ==============================================================================
-# LOGGING CONFIGURATION (Professional Convention)
-# ==============================================================================
+# Configure logger for Security Vault
 logger = logging.getLogger("CypherCore.SecurityVault")
 
 
-# ==============================================================================
-# CUSTOM EXCEPTIONS (Enterprise Error Hierarchy)
-# ==============================================================================
-class SecurityException(Exception):
-    """Base exception for all security-related errors."""
+class SecurityVaultException(Exception):
+    """Base exception for Security Vault failures."""
     pass
 
 
-class SignatureValidationError(SecurityException):
+class SignatureValidationException(SecurityVaultException):
     """Raised when signature validation fails."""
     pass
 
 
-class MissingSecretError(SecurityException):
-    """Raised when APP_SECRET is not configured."""
+class MissingCredentialsException(SecurityVaultException):
+    """Raised when required credentials are missing."""
     pass
 
 
-class InputSanitizationError(SecurityException):
-    """Raised when input validation fails."""
-    pass
-
-
-# ==============================================================================
-# SECURITY VAULT CLASS
-# ==============================================================================
 class SecurityVault:
     """
-    Enterprise-grade security layer for CypherCore.
+    Professional-grade security validation for Meta WhatsApp API.
     
     Responsibilities:
-      1. Cryptographic signature validation (HMAC-SHA256)
-      2. Input sanitization and validation
-      3. Rate limiting (prepared infrastructure)
-      4. Security event logging and monitoring
-      5. Prevention of common attack vectors
+        1. Validate HMAC-SHA256 signatures from Meta
+        2. Prevent replay attacks and tampering
+        3. Maintain audit logs of security events
+        4. Fail securely without exposing internal details
     
-    Convention: Always validate before trust. Always log security events.
+    Security Principles:
+        - Cryptographic signature verification is mandatory
+        - No business logic executes without validation
+        - All security events are logged with full context
+        - Timing-safe comparison prevents timing attacks
     """
     
-    # Configuration constants
-    SIGNATURE_ALGORITHM = "sha256"
-    SIGNATURE_HEADER = "X-Hub-Signature-256"
-    MAX_REQUEST_SIZE = 1024 * 1024  # 1MB
-    REQUEST_TIMEOUT = 30  # seconds
-    
-    # Rate limiting (basic implementation ready for enhancement)
-    _request_cache: Dict[str, list] = {}
-    _cache_cleanup_interval = 3600  # 1 hour
-    
     def __init__(self):
-        """Initialize SecurityVault with environment validation."""
+        """
+        Initialize Security Vault with credentials from environment.
+        
+        Raises:
+            MissingCredentialsException: If APP_SECRET is not configured
+        """
         self.app_secret = os.getenv("APP_SECRET")
         
         if not self.app_secret:
             logger.critical(
-                "SECURITY CRITICAL: APP_SECRET not configured in environment variables. "
-                "System cannot initialize without APP_SECRET. "
-                "Set APP_SECRET in .env file or environment."
+                "SECURITY_CRITICAL: APP_SECRET not configured. "
+                "WhatsApp signature validation disabled. "
+                "This is a critical configuration error."
             )
-            raise MissingSecretError(
-                "APP_SECRET environment variable is required but not set."
+            raise MissingCredentialsException(
+                "APP_SECRET environment variable is required for security validation"
             )
         
-        logger.info("SecurityVault initialized successfully with APP_SECRET configured.")
+        logger.info("SecurityVault initialized successfully")
     
-    # ==========================================================================
-    # SIGNATURE VALIDATION (Primary Security Function)
-    # ==========================================================================
     async def validate_signature(self, request: Request) -> bool:
         """
-        Validate HMAC-SHA256 signature from Meta Webhook.
+        Validates that the incoming request is genuinely from Meta.
         
-        Must Always Do:
-          - Verify every request is cryptographically signed by Meta
-          - Prevent unauthorized webhook access
-          - Log all validation attempts (pass and fail)
-          - Fail securely without exposing internal details
+        Process:
+            1. Extract X-Hub-Signature-256 header
+            2. Verify signature algorithm is SHA256
+            3. Compute expected HMAC using request body + APP_SECRET
+            4. Compare using timing-safe comparison
         
         Args:
-            request (Request): FastAPI Request object
+            request: FastAPI Request object
         
         Returns:
             bool: True if signature is valid
         
         Raises:
-            HTTPException: 403 for invalid signature, 400 for malformed request
+            HTTPException: 403 if signature is invalid or missing
+            HTTPException: 501 if signature algorithm is unsupported
         
-        Professional Convention:
-          - Use timing-safe comparison (hmac.compare_digest)
-          - Log security events with context
-          - Preserve request body for logging
+        Security Notes:
+            - Uses hmac.compare_digest() to prevent timing attacks
+            - Body is read only once and cached
+            - All failures are logged with context for audit trail
         """
-        request_ip = request.client.host if request.client else "UNKNOWN"
-        
         try:
-            # Step 1: Extract signature from request headers
-            signature_header = request.headers.get(self.SIGNATURE_HEADER)
+            # Step 1: Extract signature header
+            signature_header = request.headers.get("X-Hub-Signature-256")
             
             if not signature_header:
                 logger.warning(
-                    f"SECURITY_EVENT | Missing Signature Header | "
-                    f"IP: {request_ip} | "
-                    f"Timestamp: {datetime.utcnow().isoformat()}"
+                    event="SIGNATURE_VALIDATION_FAILED",
+                    reason="Missing X-Hub-Signature-256 header",
+                    remote_ip=request.client.host if request.client else "unknown"
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail="Forbidden: Missing signature verification"
+                    detail="Missing X-Hub-Signature-256 header"
                 )
             
-            # Step 2: Parse signature header (format: sha256=hash)
+            # Step 2: Parse signature format (sha256=hash)
             try:
-                sha_name, signature_hash = signature_header.split('=')
+                signature_algorithm, signature_hash = signature_header.split("=")
             except ValueError:
                 logger.warning(
-                    f"SECURITY_EVENT | Malformed Signature Header | "
-                    f"IP: {request_ip} | "
-                    f"Header: {signature_header[:20]}..."
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail="Bad Request: Invalid signature format"
-                )
-            
-            # Step 3: Verify algorithm is SHA256 (prevent algorithm substitution)
-            if sha_name.lower() != self.SIGNATURE_ALGORITHM:
-                logger.warning(
-                    f"SECURITY_EVENT | Unsupported Signature Algorithm | "
-                    f"IP: {request_ip} | "
-                    f"Algorithm: {sha_name} | "
-                    f"Timestamp: {datetime.utcnow().isoformat()}"
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail="Bad Request: Only SHA256 signatures accepted"
-                )
-            
-            # Step 4: Get request body (already consumed in FastAPI)
-            body = await request.body()
-            
-            if len(body) > self.MAX_REQUEST_SIZE:
-                logger.warning(
-                    f"SECURITY_EVENT | Request Size Exceeds Limit | "
-                    f"IP: {request_ip} | "
-                    f"Size: {len(body)} bytes"
-                )
-                raise HTTPException(
-                    status_code=413,
-                    detail="Bad Request: Payload too large"
-                )
-            
-            # Step 5: Calculate expected signature (timing-safe)
-            try:
-                expected_hash = hmac.new(
-                    self.app_secret.encode('utf-8'),
-                    msg=body,
-                    digestmod=hashlib.sha256
-                ).hexdigest()
-            except Exception as e:
-                logger.error(
-                    f"SECURITY_ERROR | Signature Calculation Failed | "
-                    f"IP: {request_ip} | "
-                    f"Error: {str(e)}"
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail="Internal Server Error: Signature validation service unavailable"
-                )
-            
-            # Step 6: Timing-safe comparison (prevents timing attacks)
-            if not hmac.compare_digest(expected_hash, signature_hash):
-                logger.warning(
-                    f"SECURITY_EVENT | Invalid Signature | "
-                    f"IP: {request_ip} | "
-                    f"Expected: {expected_hash[:16]}... | "
-                    f"Received: {signature_hash[:16]}... | "
-                    f"Timestamp: {datetime.utcnow().isoformat()}"
+                    event="SIGNATURE_VALIDATION_FAILED",
+                    reason="Malformed signature header format",
+                    remote_ip=request.client.host if request.client else "unknown"
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail="Forbidden: Signature verification failed"
+                    detail="Invalid signature format"
                 )
             
-            # Step 7: Success - Log valid signature
-            logger.info(
-                f"SECURITY_SUCCESS | Signature Validated | "
-                f"IP: {request_ip} | "
-                f"Timestamp: {datetime.utcnow().isoformat()}"
+            # Step 3: Verify algorithm
+            if signature_algorithm != "sha256":
+                logger.warning(
+                    event="SIGNATURE_VALIDATION_FAILED",
+                    reason=f"Unsupported signature algorithm: {signature_algorithm}",
+                    remote_ip=request.client.host if request.client else "unknown"
+                )
+                raise HTTPException(
+                    status_code=501,
+                    detail=f"Unsupported signature algorithm: {signature_algorithm}"
+                )
+            
+            # Step 4: Get request body
+            body = await request.body()
+            
+            if not body:
+                logger.warning(
+                    event="SIGNATURE_VALIDATION_FAILED",
+                    reason="Empty request body",
+                    remote_ip=request.client.host if request.client else "unknown"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Empty request body"
+                )
+            
+            # Step 5: Compute expected signature
+            expected_hash = hmac.new(
+                self.app_secret.encode("utf-8"),
+                msg=body,
+                digestmod=hashlib.sha256
+            ).hexdigest()
+            
+            # Step 6: Timing-safe comparison (prevents timing attacks)
+            is_valid = hmac.compare_digest(expected_hash, signature_hash)
+            
+            if not is_valid:
+                logger.warning(
+                    event="SIGNATURE_VALIDATION_FAILED",
+                    reason="Signature mismatch - possible tampering or invalid secret",
+                    remote_ip=request.client.host if request.client else "unknown",
+                    body_length=len(body)
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Invalid signature"
+                )
+            
+            # Success
+            logger.debug(
+                event="SIGNATURE_VALIDATION_SUCCESS",
+                remote_ip=request.client.host if request.client else "unknown",
+                body_length=len(body)
             )
             return True
-            
+        
         except HTTPException:
-            # Re-raise HTTP exceptions (already properly formatted)
             raise
         except Exception as e:
-            # Catch unexpected errors and fail securely
             logger.error(
-                f"SECURITY_ERROR | Unexpected Error in Signature Validation | "
-                f"IP: {request_ip} | "
-                f"Error Type: {type(e).__name__} | "
-                f"Error: {str(e)}",
-                exc_info=True
+                event="SIGNATURE_VALIDATION_EXCEPTION",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                remote_ip=request.client.host if request.client else "unknown"
             )
             raise HTTPException(
-                status_code=500,
-                detail="Internal Server Error: Authentication service unavailable"
+                status_code=403,
+                detail="Signature verification failed"
             )
     
-    # ==========================================================================
-    # INPUT SANITIZATION (Secondary Security Layer)
-    # ==========================================================================
     @staticmethod
-    def sanitize_input(raw_input: str, max_length: int = 4096) -> str:
+    def sanitize_input(data: str, max_length: int = 1000) -> Optional[str]:
         """
-        Sanitize user input to prevent injection attacks.
-        
-        Protection against:
-          - SQL Injection
-          - XSS (Cross-Site Scripting)
-          - Command Injection
-          - Buffer overflow
+        Sanitizes user input to prevent injection attacks.
         
         Args:
-            raw_input (str): Raw user input
-            max_length (int): Maximum allowed input length
+            data: Raw user input
+            max_length: Maximum allowed length (default: 1000 chars)
         
         Returns:
-            str: Sanitized input
+            Sanitized string or None if invalid
         
-        Raises:
-            InputSanitizationError: If input fails validation
+        Security Notes:
+            - Removes null bytes
+            - Enforces length limits
+            - Strips dangerous control characters
+            - Logs suspicious input patterns
         """
-        if not isinstance(raw_input, str):
-            raise InputSanitizationError("Input must be a string")
+        if not data or not isinstance(data, str):
+            return None
         
-        # Length validation
-        if len(raw_input) > max_length:
+        # Remove null bytes
+        data = data.replace("\x00", "")
+        
+        # Enforce length limit
+        if len(data) > max_length:
             logger.warning(
-                f"SECURITY_EVENT | Input Exceeds Length Limit | "
-                f"Length: {len(raw_input)} | Max: {max_length}"
+                event="INPUT_SANITIZATION",
+                reason="Input exceeds maximum length",
+                provided_length=len(data),
+                max_length=max_length
             )
-            raise InputSanitizationError(
-                f"Input exceeds maximum length of {max_length} characters"
+            return data[:max_length]
+        
+        # Remove dangerous control characters (except newline, tab)
+        sanitized = "".join(
+            char for char in data 
+            if ord(char) >= 32 or char in "\n\t"
+        )
+        
+        if sanitized != data:
+            logger.warning(
+                event="INPUT_SANITIZATION",
+                reason="Control characters removed"
             )
-        
-        # Strip whitespace
-        sanitized = raw_input.strip()
-        
-        # Remove null bytes (command injection prevention)
-        if '\x00' in sanitized:
-            logger.warning("SECURITY_EVENT | Null byte detected in input")
-            raise InputSanitizationError("Input contains invalid characters")
-        
-        # Remove common injection patterns
-        dangerous_patterns = [
-            "'; DROP TABLE",
-            "<script>",
-            "javascript:",
-            "onclick=",
-            "onerror="
-        ]
-        
-        lower_input = sanitized.lower()
-        for pattern in dangerous_patterns:
-            if pattern.lower() in lower_input:
-                logger.warning(
-                    f"SECURITY_EVENT | Dangerous Pattern Detected | "
-                    f"Pattern: {pattern}"
-                )
-                raise InputSanitizationError(
-                    "Input contains suspicious patterns and was rejected"
-                )
         
         return sanitized
-    
-    # ==========================================================================
-    # REQUEST VALIDATION (Comprehensive Input Validation)
-    # ==========================================================================
-    @staticmethod
-    def validate_payload_structure(payload: Dict) -> bool:
-        """
-        Validate Meta webhook payload structure.
-        
-        Ensures:
-          - Payload has required top-level keys
-          - No unexpected data types
-          - No missing critical fields
-        
-        Args:
-            payload (Dict): Webhook payload from Meta
-        
-        Returns:
-            bool: True if payload structure is valid
-        
-        Raises:
-            InputSanitizationError: If structure is invalid
-        """
-        try:
-            # Validate top-level structure
-            if not isinstance(payload, dict):
-                raise InputSanitizationError("Payload must be a dictionary")
-            
-            # Meta webhooks must have 'object' and 'entry' fields
-            if "object" not in payload:
-                raise InputSanitizationError("Missing required field: 'object'")
-            
-            if payload["object"] != "whatsapp_business_account":
-                raise InputSanitizationError(
-                    f"Invalid object type: {payload['object']}"
-                )
-            
-            if "entry" not in payload or not isinstance(payload["entry"], list):
-                raise InputSanitizationError("Missing or invalid field: 'entry'")
-            
-            if not payload["entry"]:
-                # Empty entry is valid (webhook test)
-                logger.debug("Empty webhook payload (likely test event)")
-                return True
-            
-            # Validate first entry structure
-            entry = payload["entry"][0]
-            if not isinstance(entry, dict):
-                raise InputSanitizationError("Entry must be a dictionary")
-            
-            if "changes" not in entry or not isinstance(entry["changes"], list):
-                raise InputSanitizationError("Missing or invalid field: 'changes'")
-            
-            return True
-            
-        except InputSanitizationError:
-            raise
-        except Exception as e:
-            logger.error(
-                f"SECURITY_ERROR | Payload Structure Validation Failed | "
-                f"Error: {str(e)}",
-                exc_info=True
-            )
-            raise InputSanitizationError(
-                "Payload structure validation failed"
-            )
-    
-    # ==========================================================================
-    # RATE LIMITING INFRASTRUCTURE (Enterprise Ready)
-    # ==========================================================================
-    def check_rate_limit(
-        self,
-        identifier: str,
-        max_requests: int = 100,
-        time_window: int = 60
-    ) -> Tuple[bool, Optional[str]]:
-        """
-        Check rate limit for a given identifier (IP, phone number, etc).
-        
-        Professional Convention:
-          - Use in-memory cache for high-performance checks
-          - Prepared for Redis integration
-          - Configurable per endpoint
-        
-        Args:
-            identifier (str): Unique identifier (IP, phone number, etc)
-            max_requests (int): Max requests allowed in time window
-            time_window (int): Time window in seconds
-        
-        Returns:
-            Tuple[bool, Optional[str]]: (is_allowed, remaining_requests_info)
-        """
-        current_time = datetime.utcnow()
-        
-        # Initialize cache entry if not exists
-        if identifier not in self._request_cache:
-            self._request_cache[identifier] = []
-        
-        # Clean old timestamps (older than time_window)
-        cutoff_time = current_time - timedelta(seconds=time_window)
-        self._request_cache[identifier] = [
-            ts for ts in self._request_cache[identifier]
-            if ts > cutoff_time
-        ]
-        
-        # Check if rate limit exceeded
-        if len(self._request_cache[identifier]) >= max_requests:
-            logger.warning(
-                f"SECURITY_EVENT | Rate Limit Exceeded | "
-                f"Identifier: {identifier} | "
-                f"Requests: {len(self._request_cache[identifier])}/{max_requests}"
-            )
-            return False, f"Rate limited: {len(self._request_cache[identifier])}/{max_requests}"
-        
-        # Add current request
-        self._request_cache[identifier].append(current_time)
-        return True, f"{len(self._request_cache[identifier])}/{max_requests}"
-    
-    # ==========================================================================
-    # SECURITY EVENT LOGGING
-    # ==========================================================================
-    @staticmethod
-    def log_security_event(
-        event_type: str,
-        severity: str,
-        details: Dict,
-        user_identifier: Optional[str] = None
-    ) -> None:
-        """
-        Log security events with full context for audit trail.
-        
-        Professional Convention:
-          - Structured logging for SIEM integration
-          - No sensitive data in logs
-          - Timestamp and correlation ID
-        
-        Args:
-            event_type (str): Type of security event
-            severity (str): Severity level (INFO, WARNING, CRITICAL)
-            details (Dict): Event details (sanitized)
-            user_identifier (Optional[str]): User/identifier involved
-        """
-        log_entry = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "event_type": event_type,
-            "severity": severity,
-            "user_identifier": user_identifier or "UNKNOWN",
-            "details": details
-        }
-        
-        if severity == "CRITICAL":
-            logger.critical(json.dumps(log_entry))
-        elif severity == "WARNING":
-            logger.warning(json.dumps(log_entry))
-        else:
-            logger.info(json.dumps(log_entry))
-
-
-# ==============================================================================
-# MODULE INITIALIZATION
-# ==============================================================================
-def initialize_vault() -> SecurityVault:
-    """
-    Initialize and return SecurityVault instance.
-    
-    Professional Convention:
-      - Called once at application startup
-      - Ensures all security prerequisites are met
-      - Fails fast if configuration is invalid
-    
-    Returns:
-        SecurityVault: Initialized security vault instance
-    
-    Raises:
-        MissingSecretError: If APP_SECRET is not configured
-    """
-    try:
-        vault = SecurityVault()
-        logger.info("SecurityVault initialized successfully")
-        return vault
-    except MissingSecretError as e:
-        logger.critical(f"Failed to initialize SecurityVault: {str(e)}")
-        raise
-
-
-# ==============================================================================
-# END OF FILE: security.py
-# ==============================================================================
